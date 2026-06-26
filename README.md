@@ -231,3 +231,19 @@ plugin/lora-scripts-ui-main/ui/dist/
 - Edge 90+
 - Firefox 90+
 - Safari 15+
+
+---
+
+## License
+
+本项目基于 [**PolyForm Noncommercial License 1.0.0**](https://polyformproject.org/licenses/noncommercial/1.0.0)（非商业许可）授权。
+
+> Required Notice: Copyright 2025 LichiTI (https://github.com/LichiTI)
+
+完整条款见仓库根目录的 [LICENSE](LICENSE) 文件。
+
+### 使用要点
+
+- 仅供**非商业用途**：个人研究、学习、私有娱乐、业余爱好、教育、公益、公共科研及政府机构等
+- 允许对本项目进行**修改与再分发**，但必须附带本许可条款及上述版权声明
+- 任何**商业用途**须另行获得许可
