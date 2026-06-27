@@ -89,6 +89,7 @@ const CONDITIONAL_KEYS = new Set([
   'enable_debug_options',
   'caption_tag_dropout_target_mode',
   'train_length_mode',
+  'glokr_show_advanced',
 ]);
 const DRAFT_STORAGE_KEY = 'sd-rescripts:ui:sdxl-draft';
 const DELETED_TASK_IDS_STORAGE_KEY = 'sd-rescripts:task-history:deleted-ids';
@@ -127,13 +128,24 @@ const state = {
   verticalTabs: localStorage.getItem('verticalTabs') === 'true',
   activeModule: 'config',
   activeTab: localStorage.getItem('sdxl_ui_tab') || 'model',
-  navigatorCollapsed: false,
+  navigatorCollapsed: localStorage.getItem('sd-rescripts:navigator-collapsed') === 'true',
   sections: {
     'training-types': true,
     'preset-list': true,
   },
   accentColor: localStorage.getItem('accentColor') || null,
   activeTrainingType: localStorage.getItem('sd-rescripts:training-type') || 'sdxl-lora',
+  _collapsedTrainingGroups: (() => {
+    const def = ['ControlNet', 'Textual Inversion', '其他模型训练'];
+    try {
+      const saved = localStorage.getItem('sd-rescripts:training-groups-collapsed');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        return new Set(Array.isArray(parsed) ? parsed : def);
+      }
+    } catch (_e) {}
+    return new Set(def);
+  })(),
   config: createDefaultConfig(localStorage.getItem('sd-rescripts:training-type') || 'sdxl-lora'),
   hasLocalDraft: false,
   presets: [],
@@ -585,9 +597,35 @@ function renderConfig(container) {
   `;
 
   renderNavigator();
+  bindCollapsibleSections();
   syncTopbarState();
   syncFooterAction();
   updateJSONPreview();
+}
+
+const SECTION_COLLAPSED_KEY = 'sd-rescripts:section-collapsed';
+function _getSectionCollapsed() {
+  try {
+    const saved = localStorage.getItem(SECTION_COLLAPSED_KEY);
+    if (saved) return new Set(JSON.parse(saved));
+  } catch (_e) {}
+  return new Set();
+}
+function _persistSectionCollapsed(set) {
+  try { localStorage.setItem(SECTION_COLLAPSED_KEY, JSON.stringify(Array.from(set))); } catch (_e) {}
+}
+function bindCollapsibleSections() {
+  document.querySelectorAll('details.form-section').forEach((d) => {
+    if (d.__toggleBound) return;
+    d.__toggleBound = true;
+    d.addEventListener('toggle', () => {
+      const id = d.id;
+      if (!id) return;
+      const set = _getSectionCollapsed();
+      if (d.open) set.delete(id); else set.add(id);
+      _persistSectionCollapsed(set);
+    });
+  });
 }
 
 function renderSection(section) {
@@ -642,15 +680,22 @@ function renderSection(section) {
     `;
   }
 
+  const _sectionCollapsed = _getSectionCollapsed();
+  const isSectionCollapsed = _sectionCollapsed.has(section.id);
   return `
-    <section class="form-section" id="${escapeHtml(section.id)}">
-      <header class="section-header">
-        <h3>${escapeHtml(section.title)}</h3>
-        <span class="section-meta">${realFieldCount} 项参数</span>
-      </header>
+    <details class="form-section collapsible-panel" id="${escapeHtml(section.id)}"${isSectionCollapsed ? '' : ' open'}>
+      <summary class="section-header collapsible-summary">
+        <span class="collapsible-summary-main">
+          <span class="collapsible-title">${escapeHtml(section.title)}</span>
+        </span>
+        <span class="collapsible-actions">
+          <span class="section-meta">${realFieldCount} 项参数</span>
+          <span class="collapsible-caret" aria-hidden="true">⌄</span>
+        </span>
+      </summary>
       <div class="section-summary">${escapeHtml(sectionDescription)}</div>
       <div class="section-content">${content}</div>
-    </section>
+    </details>
   `;
 }
 
@@ -1411,6 +1456,18 @@ function renderStatusDeck() {
   `;
 }
 
+function _readCollapsedGroups() {
+  const def = ['ControlNet', 'Textual Inversion', '其他模型训练'];
+  try {
+    const saved = localStorage.getItem('sd-rescripts:training-groups-collapsed');
+    if (saved !== null) {
+      const parsed = JSON.parse(saved);
+      return new Set(Array.isArray(parsed) ? parsed : def);
+    }
+  } catch (_e) {}
+  return new Set(def);
+}
+
 function renderNavigator() {
   const trainingTypeList = $('#section-training-types .group-list');
   if (trainingTypeList) {
@@ -1419,15 +1476,9 @@ function renderNavigator() {
       if (!groups[tt.group]) groups[tt.group] = [];
       groups[tt.group].push(tt);
     }
-    // 默认折叠的组
-    const defaultCollapsed = new Set(['ControlNet', 'Textual Inversion', '其他模型训练']);
-    const _collapsedGroups = state._collapsedTrainingGroups || (state._collapsedTrainingGroups = new Set(defaultCollapsed));
-    // 仅在用户切换训练类型时自动展开该组（通过标记避免每次渲染都展开）
-    const activeGroup = TRAINING_TYPES.find(t => t.id === state.activeTrainingType)?.group || '';
-    if (activeGroup && _collapsedGroups.has(activeGroup) && state._lastExpandedForType !== state.activeTrainingType) {
-      _collapsedGroups.delete(activeGroup);
-      state._lastExpandedForType = state.activeTrainingType;
-    }
+    // 每次渲染直接从 localStorage 读取，localStorage 是唯一真相，避免 state 缓存与实际不一致
+    const _collapsedGroups = _readCollapsedGroups();
+    state._collapsedTrainingGroups = _collapsedGroups;
 
     trainingTypeList.innerHTML = Object.entries(groups).map(([group, items]) => {
       const collapsed = _collapsedGroups.has(group);
@@ -1456,13 +1507,22 @@ function renderNavigator() {
 
 }
 
+function _persistTrainingGroupsCollapsed(set) {
+  try {
+    localStorage.setItem('sd-rescripts:training-groups-collapsed', JSON.stringify(Array.from(set || [])));
+  } catch (_e) {}
+}
+
 window.toggleTrainingGroup = function(group) {
-  if (!state._collapsedTrainingGroups) state._collapsedTrainingGroups = new Set();
-  if (state._collapsedTrainingGroups.has(group)) {
-    state._collapsedTrainingGroups.delete(group);
+  // 以 localStorage 为唯一真相：读取当前状态 → 切换 → 写回 → 重渲染
+  const set = _readCollapsedGroups();
+  if (set.has(group)) {
+    set.delete(group);
   } else {
-    state._collapsedTrainingGroups.add(group);
+    set.add(group);
   }
+  _persistTrainingGroupsCollapsed(set);
+  state._collapsedTrainingGroups = set;
   renderNavigator();
 };
 
@@ -1479,6 +1539,12 @@ function applyLayoutPreferences() {
     navigator?.classList.remove('collapsed');
     if (expandBtn) {
       expandBtn.style.display = 'none';
+    }
+  } else {
+    // 切回 config 模块时，重新应用用户保存的收起状态（与 setupNavigator 的 updateNavUI 一致）
+    navigator?.classList.toggle('collapsed', state.navigatorCollapsed);
+    if (expandBtn) {
+      expandBtn.style.display = state.navigatorCollapsed ? 'flex' : 'none';
     }
   }
 }
@@ -1678,23 +1744,15 @@ function setupNavigator() {
 
   collapseBtn?.addEventListener('click', () => {
     state.navigatorCollapsed = true;
+    localStorage.setItem('sd-rescripts:navigator-collapsed', 'true');
     updateNavUI();
   });
   expandBtn?.addEventListener('click', () => {
     state.navigatorCollapsed = false;
+    localStorage.setItem('sd-rescripts:navigator-collapsed', 'false');
     updateNavUI();
   });
   updateNavUI();
-
-  $$('.nav-section .section-header.collapsible').forEach((header) => {
-    header.addEventListener('click', () => {
-      const section = header.closest('.nav-section');
-      if (!section) return;
-      const sectionId = section.id.replace('section-', '');
-      state.sections[sectionId] = !state.sections[sectionId];
-      section.classList.toggle('collapsed', !state.sections[sectionId]);
-    });
-  });
 }
 function updateJSONPreview() {
   const jsonViewer = $('#json-viewer code');
@@ -6410,6 +6468,16 @@ window.switchTrainingType = (typeId) => {
   if (typeId === state.activeTrainingType) return;
   state.activeTrainingType = typeId;
   localStorage.setItem('sd-rescripts:training-type', typeId);
+  // 切换到的训练类型所在分组如果被折叠，自动展开它（仅在切换时触发，刷新时不触发，以保留用户折叠状态）
+  const newGroup = TRAINING_TYPES.find(t => t.id === typeId)?.group || '';
+  if (newGroup) {
+    const set = _readCollapsedGroups();
+    if (set.has(newGroup)) {
+      set.delete(newGroup);
+      _persistTrainingGroupsCollapsed(set);
+      state._collapsedTrainingGroups = set;
+    }
+  }
   // 重建配置，保留共用字段的当前值
   const oldConfig = { ...state.config };
   state.config = createDefaultConfig(typeId);
