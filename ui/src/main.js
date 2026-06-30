@@ -2285,10 +2285,19 @@ function mergeTaskHistory(backendTasks, localHistory, currentTasks) {
   const localById = new Map();
   const currentById = new Map();
   for (const t of (currentTasks || [])) currentById.set(t.id, t);
+  // 后端存活任务 id 集合：只有后端仍然记得的任务，其 RUNNING/STARTING 状态才可信
+  // （TaskManager 是纯内存的，后端重启后 tasks 会清空）
+  const backendTaskIds = new Set(backendTasks.map((t) => t.id));
   for (const t of localHistory) {
     if (deletedIds.has(t.id)) continue;
-    localById.set(t.id, t);
-    byId.set(t.id, { ...t });
+    // 孤儿任务降级：本地记录为 RUNNING/STARTING，但后端已不记得该任务（说明后端重启过）
+    // → 降级为 TERMINATED，避免重启后一直显示“训练中”
+    let effective = t;
+    if ((t.status === 'RUNNING' || t.status === 'STARTING') && !backendTaskIds.has(t.id)) {
+      effective = { ...t, status: 'TERMINATED' };
+    }
+    localById.set(t.id, effective);
+    byId.set(t.id, { ...effective });
   }
   const pendingMeta = getPendingTrainingMetadata();
   const activeTaskId = state.activeTrainingTaskId || (pendingMeta && pendingMeta.taskId) || '';
@@ -7392,6 +7401,16 @@ function setupTopbarSearch() {
 function _searchConfigFields(query) {
   const tt = state.activeTrainingType;
   const sections = getSectionsForType(tt);
+  // section 实际渲染所在的 tab 可能与 section.tab 不同
+  // （getSectionsForTab 会把 save-settings 移到 training、noise-settings 移到 dataset 等）
+  // 这里构建 sectionId → 实际显示 tab 的映射，保证搜索跳转能命中
+  const displayTabMap = {};
+  for (const t of UI_TABS) {
+    const tabSections = getSectionsForTab(t.key, tt);
+    for (const s of tabSections) {
+      if (!(s.id in displayTabMap)) displayTabMap[s.id] = t.key;
+    }
+  }
   const results = [];
   for (const section of sections) {
     for (const field of section.fields) {
@@ -7402,7 +7421,7 @@ function _searchConfigFields(query) {
       if (matchLabel || matchKey || matchDesc) {
         results.push({
           field,
-          tab: section.tab,
+          tab: displayTabMap[section.id] || section.tab,
           sectionId: section.id,
           sectionTitle: section.title,
           score: matchLabel ? 3 : (matchKey ? 2 : 1),
